@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Child Iframe</title>
+    <style>body { background: #e0e7ff; font-family: sans-serif; padding: 10px; }</style>
+</head>
+<body>
+    <h3>Child Iframe</h3>
+    <div id="childLog"></div>
+
+    <script>
+        const logDiv = document.getElementById('childLog');
+        function cLog(msg) { logDiv.innerHTML += "<div>" + msg + "</div>"; }
+
+        // --- STEP A: Override postMessage on Child ---
+        // We set a trap. If anyone calls childWindow.postMessage, this should trigger.
+        window.__defineGetter__("postMessage", function() {
+            return function() {
+                cLog("<b>CHILD INTERCEPT:</b> Hacked function called!");
+                alert("CHILD HACKED: contentWindow.postMessage was intercepted!");
+            };
+        });
+        cLog("Child override active.");
+
+        // --- STEP B: Validate Internal (Same-Origin) Access ---
+        // This PROVES the override works when we call it on ourselves.
+        try {
+            cLog("Attempting Same-Origin call (self)...");
+            window.postMessage("Self Test", "*"); 
+        } catch(e) { cLog("Same-origin call finished."); }
+
+        // --- STEP C: Send Message to Parent (Cross-Origin) ---
+        // The Parent has also overridden postMessage.
+        // If security is working, we will NOT see the Parent's hacked alert.
+        setTimeout(() => {
+            cLog("3. Sending message to Parent...");
+            window.parent.postMessage("Hello from Child", "*");
+        }, 1000);
+
+        window.addEventListener("message", (e) => {
+            cLog("Received: " + e.data);
+        });
+    </script>
+</body>
+</html>
