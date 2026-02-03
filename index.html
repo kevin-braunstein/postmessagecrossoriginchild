@@ -1,45 +1,72 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Child Iframe</title>
-    <style>body { background: #e0e7ff; font-family: sans-serif; padding: 10px; }</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Child Frame</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #e0f7fa; }
+        .log-box { background: white; border: 1px solid #00acc1; padding: 10px; height: 200px; overflow-y: scroll; margin-top: 10px; font-family: monospace; }
+        button { padding: 10px 20px; cursor: pointer; background: #00acc1; color: white; border: none; border-radius: 4px; font-size: 16px; margin: 5px 0; }
+        button:hover { background: #00838f; }
+    </style>
 </head>
 <body>
-    <h3>Child Iframe</h3>
-    <div id="childLog"></div>
+    <h1>Child Frame</h1>
+    <p>This frame is inside the parent.</p>
+    
+    <button onclick="sendNormalMessage()">1. Send Normal Message</button>
+    <button onclick="interceptPostMessage()">2. Intercept (Override) postMessage</button>
+    <button onclick="sendNormalMessage()">3. Send Message (After Override)</button>
+
+    <h3>Internal Log (Outgoing Data):</h3>
+    <div id="childLogger" class="log-box"></div>
 
     <script>
-        const logDiv = document.getElementById('childLog');
-        function cLog(msg) { logDiv.innerHTML += "<div>" + msg + "</div>"; }
+        const logger = document.getElementById('childLogger');
 
-        // --- STEP A: Override postMessage on Child ---
-        // We set a trap. If anyone calls childWindow.postMessage, this should trigger.
-        window.__defineGetter__("postMessage", function() {
-            return function() {
-                cLog("<b>CHILD INTERCEPT:</b> Hacked function called!");
-                alert("CHILD HACKED: contentWindow.postMessage was intercepted!");
+        function log(msg, color = 'black') {
+            const div = document.createElement('div');
+            div.textContent = `> ${msg}`;
+            div.style.color = color;
+            logger.appendChild(div);
+            logger.scrollTop = logger.scrollHeight;
+        }
+
+        // 1. Function to send a message normally
+        function sendNormalMessage() {
+            const payload = { text: "Hello from Child", timestamp: Date.now() };
+            
+            // This attempts to send data to the parent
+            try {
+                window.parent.postMessage(payload, "https://kevinbraunstein.github.io");
+                log(`Sent payload: ${JSON.stringify(payload)}`);
+            } catch (e) {
+                log(`Error sending: ${e.message}`, 'red');
+            }
+        }
+
+        // 2. The Interception Logic
+        function interceptPostMessage() {
+            log("--- INITIATING INTERCEPT ---", 'blue');
+
+            // A. Save the original native function
+            const originalPostMessage = window.parent.postMessage;
+
+            // B. Overwrite the function on the window.parent object
+            // Note: We are overwriting the reference we have to the parent's postMessage
+            window.parent.postMessage = function(message, targetOrigin, transfer) {
+                
+                // C. Log the interception details
+                log(`[INTERCEPTED] Data: ${JSON.stringify(message)} | Target: ${targetOrigin}`, 'green');
+
+                // D. Call the original function so the app doesn't break
+                // We use .call() to ensure 'this' context is correct, though usually fine here.
+                return originalPostMessage.call(window.parent, message, targetOrigin, transfer);
             };
-        });
-        cLog("Child override active.");
 
-        // --- STEP B: Validate Internal (Same-Origin) Access ---
-        // This PROVES the override works when we call it on ourselves.
-        try {
-            cLog("Attempting Same-Origin call (self)...");
-            window.postMessage("Self Test", "*"); 
-        } catch(e) { cLog("Same-origin call finished."); }
-
-        // --- STEP C: Send Message to Parent (Cross-Origin) ---
-        // The Parent has also overridden postMessage.
-        // If security is working, we will NOT see the Parent's hacked alert.
-        setTimeout(() => {
-            cLog("3. Sending message to Parent...");
-            window.parent.postMessage("Hello from Child", "*");
-        }, 1000);
-
-        window.addEventListener("message", (e) => {
-            cLog("Received: " + e.data);
-        });
+            log("--- OVERRIDE COMPLETE ---", 'blue');
+        }
     </script>
 </body>
 </html>
