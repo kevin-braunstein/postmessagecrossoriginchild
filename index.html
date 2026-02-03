@@ -4,53 +4,67 @@
     <meta charset="UTF-8">
     <title>Child iFrame</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; padding: 15px; background: #e3f2fd; border-left: 5px solid #2196F3; }
-        h3 { margin-top: 0; color: #0d47a1; }
+        body { font-family: 'Segoe UI', sans-serif; padding: 15px; background: #ffebee; border-left: 5px solid #d32f2f; }
+        h3 { margin-top: 0; color: #b71c1c; }
         
-        .step-box { background: #fff; padding: 10px; margin-bottom: 10px; border: 1px solid #bbdefb; }
+        .step-box { background: #fff; padding: 10px; margin-bottom: 10px; border: 1px solid #ef9a9a; }
         
-        button { cursor: pointer; padding: 6px 12px; background: #2196F3; color: white; border: none; border-radius: 3px; }
-        button:hover { background: #1976D2; }
+        button { cursor: pointer; padding: 6px 12px; background: #d32f2f; color: white; border: none; border-radius: 3px; }
+        button:hover { background: #b71c1c; }
         
         .code-output { background: #333; color: #fff; padding: 8px; font-family: monospace; font-size: 12px; margin-top: 5px; min-height: 20px; white-space: pre-wrap; }
         .highlight { color: #ffff00; font-weight: bold; }
+        .fail { color: #ff5252; font-weight: bold; }
+        .success { color: #69f0ae; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h3>Child iFrame (Different Origin)</h3>
+    <h3>Child iFrame (Attacker)</h3>
 
     <div class="step-box">
-        <strong>Step 3: Inspect Parent</strong>
-        <p>Look at <code>parent.postMessage</code> from this origin.</p>
-        <button onclick="inspectParent()">Inspect Signature</button>
-        <div id="inspectOutput" class="code-output">Ready to inspect...</div>
+        <strong>Step 3: Attack Parent Proxy</strong>
+        <p>Attempt to overwrite <code>window.parent.postMessage</code> with a "Dropper" function that discards messages.</p>
+        <button onclick="attemptAttack()">Attempt Override</button>
+        <div id="attackOutput" class="code-output">Ready to attack...</div>
     </div>
 
     <div class="step-box">
         <strong>Step 4: Send Message</strong>
-        <p>Attempt to send a message to the parent.</p>
+        <p>Send a message. If the attack worked, the Parent will hear silence.</p>
         <button onclick="sendMessage()">Send Message</button>
         <div id="sendOutput" class="code-output">Ready to send...</div>
     </div>
 
     <script>
-        function inspectParent() {
-            const out = document.getElementById('inspectOutput');
+        function attemptAttack() {
+            const out = document.getElementById('attackOutput');
+            out.innerText = "Attempting to overwrite window.parent.postMessage...";
+
+            // THE ATTACK: Define a getter on the parent proxy that returns a dummy function
             try {
-                // We convert the function to a string to see its source code
-                const signature = window.parent.postMessage.toString();
-                
-                out.innerHTML = "Browser reports signature as:\n" + 
-                                `<span class='highlight'>${signature}</span>`;
-                
-                if (signature.includes("native code")) {
-                    out.innerHTML += "\n\n[ANALYSIS]: We see Native Code. The Parent's override is HIDDEN from us.";
-                } else {
-                    out.innerHTML += "\n\n[ANALYSIS]: We see custom JavaScript. The override is leaked.";
+                // Method A: Direct access (usually undefined on cross-origin)
+                if (window.parent.__defineGetter__) {
+                    window.parent.__defineGetter__("postMessage", function() {
+                        return function() {
+                            console.log(">> DROPPER: Message discarded by Child!");
+                            out.innerText += "\n[FAKE SUCCESS] Dropper installed (this shouldn't happen).";
+                        };
+                    });
+                } 
+                // Method B: Prototype injection (Standard attack vector)
+                else {
+                    Object.prototype.__defineGetter__.call(window.parent, "postMessage", function() {
+                        return function() {
+                            console.log(">> DROPPER: Message discarded by Child!");
+                        };
+                    });
                 }
-            } catch(e) {
-                out.innerText = "Error inspecting: " + e.message;
+                
+                out.innerText += "\n[RESULT]: No Error Thrown? (Suspicious...)";
+            } catch (e) {
+                out.innerHTML += `\n<span class='fail'>[BLOCKED]: ${e.message}</span>`;
+                out.innerHTML += `\nAnalysis: The browser prevented write-access to the cross-origin parent.`;
             }
         }
 
@@ -58,10 +72,11 @@
             const out = document.getElementById('sendOutput');
             out.innerText = "Sending message: 'Hello from Child'...";
             
-            // This call crosses the origin boundary
+            // If the attack above succeeded, this line would call the Dropper function.
+            // If the attack failed, this calls the native browser API.
             window.parent.postMessage("Hello from Child", "*");
             
-            out.innerText += "\nMessage sent. Check Parent 'Step 5' log.";
+            out.innerText += "\nMessage executed. Check Parent Log.";
         }
     </script>
 </body>
