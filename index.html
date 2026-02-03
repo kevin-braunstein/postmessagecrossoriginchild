@@ -9,12 +9,13 @@
         
         .step-box { background: #fff; padding: 10px; margin-bottom: 10px; border: 1px solid #bbdefb; }
         
-        button { cursor: pointer; padding: 6px 12px; background: #2196F3; color: white; border: none; border-radius: 3px; }
+        button { cursor: pointer; padding: 6px 12px; background: #2196F3; color: white; border: none; border-radius: 3px; margin-right: 5px; }
         button:hover { background: #1976D2; }
         
         .code-output { background: #333; color: #fff; padding: 8px; font-family: monospace; font-size: 12px; margin-top: 5px; min-height: 20px; white-space: pre-wrap; }
         .highlight { color: #ffff00; font-weight: bold; }
         .fail { color: #ff5252; font-weight: bold; }
+        .info { color: #42a5f5; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -23,26 +24,37 @@
 
     <div class="step-box">
         <strong>Step 3: Inspect Parent Signature</strong>
-        <p>Look at <code>parent.postMessage</code> from this origin.</p>
         <button onclick="inspectParent()">Inspect Signature</button>
-        <div id="inspectOutput" class="code-output">Ready to inspect...</div>
+        <div id="inspectOutput" class="code-output">Ready...</div>
     </div>
 
     <div class="step-box">
         <strong>Step 4: Standard Send</strong>
-        <p>Attempt to send a message normally.</p>
         <button onclick="sendMessage('Standard Hello')">Send Message</button>
-        <div id="sendOutput" class="code-output">Ready to send...</div>
+        <div id="sendOutput" class="code-output">Ready...</div>
     </div>
 
     <div class="step-box" style="border-color: #f0ad4e;">
         <strong>Step 5: Proxy Attack</strong>
-        <p>Attempt to redefine <code>window.parent</code> using a Proxy to intercept calls.</p>
+        <p>Attempt to shadow <code>window.parent</code> with a Proxy.</p>
         <button onclick="attemptProxyAttack()">Inject Proxy & Send</button>
         <div id="proxyOutput" class="code-output">Ready to attack...</div>
     </div>
 
+    <div class="step-box" style="border-color: #5cb85c; border-width: 2px;">
+        <strong>Step 6: Analyze Incoming Source</strong>
+        <p>Wait for Parent Step 3 ("Hello Child"), then analyze the <code>event.source</code>.</p>
+        <div id="sourceStatus" style="color: #666; font-style: italic; margin-bottom:5px;">Waiting for message...</div>
+        
+        <button onclick="compareSource()">1. Compare Source vs Parent</button>
+        <button onclick="testSourceCall()">2. Call source.postMessage()</button>
+        
+        <div id="analysisOutput" class="code-output">Analysis Log...</div>
+    </div>
+
     <script>
+        let lastEventSource = null; // To store the captured source
+
         function log(id, msg) {
             document.getElementById(id).innerHTML += msg + "\n";
         }
@@ -54,71 +66,107 @@
             try {
                 const signature = window.parent.postMessage.toString();
                 log('inspectOutput', `Signature: ${signature}`);
-                
-                if (signature.includes("native code")) {
-                    log('inspectOutput', "[ANALYSIS]: We see Native Code. Parent's override is hidden.");
-                } else {
-                    log('inspectOutput', "[ANALYSIS]: We see custom JavaScript.");
-                }
-            } catch(e) {
-                log('inspectOutput', "Error inspecting: " + e.message);
-            }
+                if (signature.includes("native code")) log('inspectOutput', "Result: Native Code (Secure).");
+                else log('inspectOutput', "Result: Custom JS (Insecure).");
+            } catch(e) { log('inspectOutput', "Error: " + e.message); }
         }
 
         // --- STEP 4 LOGIC ---
         function sendMessage(msg) {
-            const out = document.getElementById('sendOutput');
-            out.innerText = "Sending: " + msg;
             window.parent.postMessage(msg, "*");
-            out.innerText += "\nMessage sent. Check Parent Log.";
+            log('sendOutput', "Sent: " + msg);
         }
 
-        // --- STEP 5: THE PROXY ATTACK ---
+        // --- STEP 5: PROXY ATTACK ---
         function attemptProxyAttack() {
             const out = document.getElementById('proxyOutput');
             out.innerText = "Initializing Proxy Attack...\n";
 
             try {
-                // 1. Create the Handler
                 const handler = {
                     get: function(target, prop, receiver) {
-                        // Intercept postMessage
                         if (prop === "postMessage") {
                             return function(msg) {
                                 log('proxyOutput', `>> PROXY TRAP: Dropped message "${msg}"`);
                             };
                         }
-                        // Pass everything else through to the real parent
                         return Reflect.get(target, prop, receiver);
                     }
                 };
 
-                // 2. Create the Proxy wrapping the real parent
-                // Note: We wrap window.parent, not Window constructor, to target the instance
                 const proxy = new Proxy(window.parent, handler);
 
-                // 3. Attempt to override window.parent
-                // This is the critical security check
-                window.__defineGetter__("parent", function() {
-                    return proxy;
-                });
+                // Attempt to shadow window.parent
+                window.__defineGetter__("parent", function() { return proxy; });
 
-                log('proxyOutput', "Proxy attached to window.parent.");
+                log('proxyOutput', "Proxy attached to window.parent getter.");
+                log('proxyOutput', "Attempting to send via hacked parent...");
                 
-                // 4. Try to send through the 'hacked' parent
-                log('proxyOutput', "Attempting to send 'Proxy Message'...");
+                // If the hack worked, this triggers the TRAP log above
+                // If it failed/was ignored, the message goes to the real parent
                 window.parent.postMessage("Proxy Message", "*");
 
             } catch (e) {
-                out.innerHTML += `<span class='fail'>[ATTACK FAILED]: ${e.message}</span>\n`;
-                out.innerHTML += "Analysis: window.parent is non-configurable. The browser prevented the override.";
-                
-                // Fallback check - did the message go through anyway?
-                out.innerHTML += "\n(Check Parent Log - if message appeared, the browser ignored our Proxy)";
-                // Try sending anyway to prove the real parent is still there
-                window.parent.postMessage("Proxy Failed - Real Message Sent", "*");
+                out.innerHTML += `<span class='fail'>[ATTACK ERROR]: ${e.message}</span>`;
             }
         }
+
+        // --- STEP 6: ANALYZE INCOMING SOURCE ---
+        window.addEventListener("message", (event) => {
+            document.getElementById('sourceStatus').innerHTML = "<b>Message Received!</b> Source captured.";
+            document.getElementById('sourceStatus').style.color = "#000";
+            
+            // CAPTURE THE SOURCE
+            lastEventSource = event.source; 
+            
+            log('analysisOutput', `[RX] Received: "${event.data}"`);
+        });
+
+        function compareSource() {
+            const out = document.getElementById('analysisOutput');
+            
+            if (!lastEventSource) {
+                out.innerText = "Error: No message received yet. Perform Parent Step 3 first.";
+                return;
+            }
+
+            // 1. Check Identity
+            // If Step 5 (Proxy) was successful, window.parent is now our Proxy object.
+            // However, event.source should be the REAL window.
+            const isMatch = (lastEventSource === window.parent);
+            
+            out.innerHTML += "\n--- Comparison Analysis ---\n";
+            out.innerHTML += `event.source === window.parent? <span class='highlight'>${isMatch}</span>\n`;
+            
+            if (!isMatch) {
+                out.innerHTML += "<span class='info'>[INSIGHT]</span>: They DO NOT match.\n" +
+                                 "   > window.parent is your local Proxy (Hacked).\n" +
+                                 "   > event.source is the browser's Native WindowProxy (Secure).";
+            } else {
+                 out.innerHTML += "They match. (Either the Proxy attack failed, or both are Native).";
+            }
+        }
+
+        function testSourceCall() {
+            const out = document.getElementById('analysisOutput');
+            if (!lastEventSource) return;
+
+            out.innerHTML += "\n--- Function Integrity Check ---\n";
+            
+            // 2. Check Function Signature on the Captured Source
+            try {
+                const sig = lastEventSource.postMessage.toString();
+                out.innerHTML += `event.source.postMessage: ${sig}\n`;
+                
+                out.innerHTML += "Attempting to send message via event.source...\n";
+                // This bypasses our local window.parent proxy entirely
+                lastEventSource.postMessage("Sent via event.source", "*");
+                out.innerHTML += "<span class='info'>[SENT]</span> Message dispatched via event.source (Check Parent Log).";
+            } catch (e) {
+                out.innerHTML += "Error: " + e.message;
+            }
+        }
+
     </script>
 </body>
 </html>
