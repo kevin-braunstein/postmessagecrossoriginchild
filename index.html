@@ -12,6 +12,7 @@
         .code-output { background: #333; color: #fff; padding: 8px; font-family: monospace; font-size: 12px; margin-top: 5px; min-height: 20px; white-space: pre-wrap; }
         .highlight { color: #ffff00; font-weight: bold; }
         .success { color: #69f0ae; font-weight: bold; }
+        .critical { color: #ff5252; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -19,118 +20,109 @@
     <h3>Child iFrame (Different Origin)</h3>
 
     <div class="step-box">
-        <strong>Steps 3-5 (Previous)</strong>
-        <p>Use these to setup the environment if needed.</p>
-        <button onclick="inspectParent()">Step 3: Inspect</button>
-        <button onclick="sendMessage('Test')">Step 4: Send</button>
-        <button onclick="attemptProxyAttack()">Step 5: Proxy Parent</button>
+        <strong>Setup / Debug</strong>
+        <button onclick="inspectParent()">Inspect Sig</button>
+        <button onclick="location.reload()">Reset Frame</button>
     </div>
 
     <div class="step-box" style="border-color: #5cb85c; border-width: 2px;">
-        <strong>Step 6: Capture Source</strong>
+        <strong>Step 6: Monitor Incoming</strong>
         <p>Wait for Parent Step 3 ("Hello Child").</p>
-        <div id="sourceStatus" style="color: #666; font-style: italic; margin-bottom:5px;">Waiting for message...</div>
-        <div id="analysisOutput" class="code-output">Analysis Log...</div>
+        <div id="sourceStatus" style="color: #666; font-style: italic; margin-bottom:5px;">Waiting...</div>
+        <div id="analysisOutput" class="code-output">Log...</div>
     </div>
 
     <div class="step-box" style="border-color: #d32f2f; border-width: 2px;">
-        <strong>Step 7: Proxy Attack on Event.Source</strong>
-        <p>Wrap the captured <code>event.source</code> in a Proxy and overwrite the property on the event object.</p>
+        <strong>Step 8: Global Prototype Attack</strong>
+        <p>Override <code>MessageEvent.prototype.source</code> to automatically proxy ALL future messages.</p>
         
-        <button onclick="proxySourceAttack()">Inject Proxy on Source</button>
-        <button onclick="testPoisonedSource()">Test (Send Message)</button>
+        <button onclick="applyGlobalHack()">1. Apply Global Hack</button>
+        <button onclick="testLastCaptured()">2. Test Last Captured Source</button>
         
-        <div id="sourceAttackLog" class="code-output">Ready to attack...</div>
+        <div id="globalLog" class="code-output">Ready...</div>
     </div>
 
     <script>
-        let lastEvent = null; // Store the whole event object
-        
+        let lastCapturedEvent = null;
+
         function log(id, msg) {
             document.getElementById(id).innerHTML += msg + "\n";
         }
+        function inspectParent() { try { log('analysisOutput', window.parent.postMessage.toString()); } catch(e) {} }
 
-        // --- PREVIOUS HELPERS (Condensed) ---
-        function inspectParent() { 
-            try { log('analysisOutput', "Sig: " + window.parent.postMessage.toString()); } catch(e) { log('analysisOutput', e.message); }
-        }
-        function sendMessage(msg) { window.parent.postMessage(msg, "*"); }
-        function attemptProxyAttack() {
-            try {
-                const proxy = new Proxy(window.parent, {
-                    get: (t, p, r) => (p === "postMessage") ? (msg) => log('proxyOutput', `TRAP: ${msg}`) : Reflect.get(t, p, r)
-                });
-                window.__defineGetter__("parent", () => proxy);
-                log('proxyOutput', "Parent Shadowed.");
-            } catch(e) { log('proxyOutput', "Fail: " + e.message); }
-        }
-
-        // --- STEP 6 LOGIC ---
+        // --- STEP 6: CAPTURE EVENTS ---
         window.addEventListener("message", (event) => {
-            document.getElementById('sourceStatus').innerHTML = "<b>Message Received!</b> Event captured.";
-            document.getElementById('sourceStatus').style.color = "#000";
+            document.getElementById('sourceStatus').innerHTML = "<b>Message Received!</b>";
+            lastCapturedEvent = event;
+            log('analysisOutput', `[RX] New message received from: ${event.origin}`);
             
-            // Capture the whole event object to modify it later
-            lastEvent = event; 
-            log('analysisOutput', `[RX] Captured event from: ${event.origin}`);
+            // Auto-check if it was poisoned
+            try {
+                // If our hack is working, accessing event.source.postMessage should trigger our trap
+                // We use toString() or just check if it behaves weirdly.
+                // But mostly we wait for the user to click "Test" to verify interception.
+            } catch(e) {}
         });
 
-        // --- STEP 7: PROXY ATTACK ON SOURCE ---
-        function proxySourceAttack() {
-            const out = document.getElementById('sourceAttackLog');
-            out.innerText = "Initializing Proxy Attack on event.source...\n";
-
-            if (!lastEvent) {
-                out.innerText += "Error: No event captured. Run Parent Step 3 first.";
-                return;
-            }
+        // --- STEP 8: GLOBAL PROTOTYPE ATTACK ---
+        function applyGlobalHack() {
+            const out = document.getElementById('globalLog');
+            out.innerText = "Applying Prototype Override...\n";
 
             try {
-                // 1. Keep reference to real source
-                const realSource = lastEvent.source;
+                // 1. Get the original native getter
+                // We need this so we can still get the REAL source internally
+                const originalDescriptor = Object.getOwnPropertyDescriptor(MessageEvent.prototype, 'source');
+                const originalGetter = originalDescriptor.get;
 
-                // 2. Create the Trap
+                if (!originalGetter) {
+                    throw new Error("Could not find native getter for 'source'.");
+                }
+
+                // 2. Define the PROXY HANDLER (The Trap)
                 const handler = {
                     get: function(target, prop, receiver) {
                         if (prop === "postMessage") {
                             return function(msg) {
-                                out.innerHTML += `<span class='success'>[INTERCEPTED]</span> Proxy on event.source caught: "${msg}"\n`;
-                                // Optionally forward it if we wanted to be sneaky:
-                                // target.postMessage(msg, "*"); 
+                                out.innerHTML += `<span class='success'>[GLOBAL TRAP]</span> Intercepted: "${msg}"\n`;
                             };
                         }
                         return Reflect.get(target, prop, receiver);
                     }
                 };
 
-                // 3. Create Proxy
-                const sourceProxy = new Proxy(realSource, handler);
-
-                // 4. Overwrite the 'source' property on the EVENT OBJECT
-                // We cannot change the WindowProxy, but we CAN change the event object property
-                Object.defineProperty(lastEvent, 'source', {
+                // 3. Overwrite the Prototype Property
+                Object.defineProperty(MessageEvent.prototype, 'source', {
                     get: function() {
-                        return sourceProxy;
+                        // A. Call the original getter to get the real WindowProxy
+                        const realSource = originalGetter.call(this);
+                        
+                        if (!realSource) return null;
+
+                        // B. Wrap it in our Proxy
+                        return new Proxy(realSource, handler);
                     },
-                    configurable: true
+                    configurable: true // Usually true for WebIDL
                 });
 
-                out.innerHTML += "Proxy injected into lastEvent.source.\n";
-                out.innerHTML += "Variable 'lastEvent.source' is now POISONED.\n";
+                out.innerHTML += "<span class='critical'>[SUCCESS]</span> MessageEvent.prototype.source is now compromised.\n";
+                out.innerHTML += "Any message received from now on (or existing events read again) will yield a poisoned source.\n";
 
             } catch (e) {
                 out.innerHTML += `[FAILED]: ${e.message}\n`;
             }
         }
 
-        function testPoisonedSource() {
-            const out = document.getElementById('sourceAttackLog');
-            if (!lastEvent) return;
+        function testLastCaptured() {
+            const out = document.getElementById('globalLog');
+            if (!lastCapturedEvent) {
+                out.innerHTML += "No event captured yet. Ask Parent to send a message.\n";
+                return;
+            }
 
-            out.innerHTML += "Calling lastEvent.source.postMessage()...\n";
-            
-            // This call should hit our Proxy Trap, NOT the browser native sender
-            lastEvent.source.postMessage("This should be intercepted", "*");
+            out.innerHTML += "Reading lastCapturedEvent.source.postMessage('Hack')...\n";
+            // If the global hack worked, this property access now runs our new Getter -> returns Proxy -> runs Trap.
+            lastCapturedEvent.source.postMessage("Global Hack Test", "*");
         }
 
     </script>
